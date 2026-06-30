@@ -1164,3 +1164,122 @@ A-Z a-z 0-9 _ - . :
 > 表 68：mobileRobotConfiguration 对象字段说明
 
 ---
+
+# 7 预定义动作
+
+如果 AGV 支持除行驶之外的动作，这些动作通过附加到节点或边的 `actions` 数组、通过单独的 `instantActions` topic（见标准文档第 6.2.1 节）或通过动作区域（见标准文档第 6.4.1 节）进行指令。在边上执行的动作仅在 AGV 位于该边时运行（参见标准文档第 6.6.2 节）。
+
+在节点上触发的动作可以按照需要的时间运行，并且应为自终止的（例如持续五秒的音频信号，或在取货完成后结束的 pick 动作），或以成对形式定义（例如 "activateWarningLights" 和 "deactivateWarningLights"）。
+
+## 7.1 即时动作
+
+在某些情况下，需要向 AGV 发送必须立即执行的动作。这可以通过向 `instantActions` topic 发布 `instantAction` 消息来实现。这些动作不得与 AGV 当前订单的内容冲突（例如，`instantAction` 要求降低货叉，而订单要求升高货叉）。
+
+即时动作相关的一些示例包括：
+- 暂停 AGV 而不更改当前订单中的任何内容
+- 暂停后恢复订单
+- 激活信号（光学、音频等）
+
+当 AGV 收到 `instantAction` 时，应在 AGV 状态的 `instantActionStates` 数组中添加相应的 `actionStatus`。`actionStatus` 应根据动作的进展进行更新（参见标准文档第 6.6.9 节"动作状态"）。即时动作的 `blockingType` 始终为 'NONE'。
+
+当 AGV 收到无法执行的 `instantAction` 时，应报告错误类型为 'INVALID_INSTANT_ACTION'、错误级别为 'WARNING'，并将该 `instantAction` 的 `actionId` 作为 `errorReference` 传递。
+
+## 7.2 动作阻塞类型和顺序
+
+列表中多个动作的顺序定义了 AGV 执行它们的顺序。
+
+动作的并行执行由其各自的 `blockingType` 控制。动作有四种不同的阻塞类型，如表 69 所述。
+
+| | 允许并行执行 | 不允许并行执行 |
+|---|---|---|
+| 允许自动行驶 | NONE | SINGLE |
+| 不允许自动行驶 | SOFT | HARD |
+
+> 表 69：动作阻塞类型定义（取决于行驶和并行执行）
+
+当 AGV 到达需要执行新动作的点（即到达节点、边或动作区域）时，动作按照动作数组的相同顺序入队。此队列持续处理。如果队列中任何动作的阻塞类型为 'SOFT' 或 'HARD'，AGV 应停止自动行驶。如果动作的阻塞类型为 'NONE' 或 'SOFT'，则收集这些动作进行并行执行。如果要执行的动作为 'SINGLE' 或 'HARD' 类型，则在启动该动作之前，所有已收集的并行动作应为 'FINISHED' 或 'FAILED' 状态。如果队列中没有更多阻塞类型为 'SOFT' 或 'HARD' 的动作，AGV 可以恢复自动行驶。'FINISHED' 或 'FAILED' 的动作应从队列中移除。
+
+## 7.3 预定义动作
+
+本节介绍预定义的动作。如果 AGV 的能力与动作描述相符，则应使用这些预定义动作。如果有合理的方式使用已定义的参数，则应使用这些参数。如果需要成功执行动作，可以定义额外的参数。每台 AGV 都应支持 `cancelOrder`、`startPause` 和 `stopPause` 动作。
+
+如果无法将某些动作映射到以下节中的任何一个动作，AGV 制造商可以定义额外的动作，由调度系统使用。
+
+### 7.3.1 定义、参数、效果和范围
+
+动作类型 | 逆动作 | 描述 | 幂等 | 参数 | 关联状态 | 即时 | 节点 | 边 | 区域
+---|---|---|---|---|---|---|---|---|---
+startPause | stopPause | 激活暂停模式。<br>需要关联状态，因为许多 AGV 可通过硬件开关暂停。<br>不再自动行驶——无需到达下一节点。可暂停的动作（`pauseAllowed` = `true`）应暂停，其他动作继续。执行 stopPause 后恢复订单执行。 | 是 | - | paused | 是 | 否 | 否 | 否
+stopPause | startPause | 停用暂停模式。<br>运动和其他动作将恢复（如有）。<br>需要关联状态，因为许多 AGV 可通过硬件开关暂停。<br>stopPause 也可以重新启动那些通过触发 startPause 的硬件按钮停止的 AGV（如果已配置）。 | 是 | - | paused | 是 | 否 | 否 | 否
+startHibernation | stopHibernation | 启动休眠模式，在此模式下 AGV 应保持与 MQTT broker 的连接，但不再需要发送状态消息。AGV 应在停止发布状态消息之前将此动作报告为 'FINISHED'，并发布连接状态 'HIBERNATING'。如果 AGV 有活动订单，则应清除它。无需到达下一节点。<br>处于 'HIBERNATING' 连接状态时，AGV 不得移动。AGV 只能接收和响应即时动作 'stopHibernation'，不得响应任何其他命令，如订单或额外的即时动作。<br>如果在此模式下 AGV 电池电量过低，AGV 可自主停止 'HIBERNATING' 状态以报告错误。如果设置了唤醒时间，AGV 能够在指定时间自主退出 'HIBERNATING' 连接状态，并在恢复正常操作前发布相应的连接状态转换。 | 是 | wakeUpTime（string，可选） | - | 是 | 否 | 否 | 否
+stopHibernation | startHibernation | 结束休眠模式。要在 AGV 处于 'HIBERNATING' 状态时启动唤醒，控制设备（车载或外部）应订阅 `instantAction` topic 并保持与 MQTT broker 的连接。由于 AGV 的标准控制设备在休眠期间可能部分关闭，唤醒可以由不同的 MQTT 客户端（与 AGV 通常的通信客户端分开）触发。<br>成功后，AGV 应发布连接状态 ONLINE。 | 是 | - | - | 是 | 否 | 否 | 否
+shutdown | - | 启动 AGV 的协调关机，过程中 AGV 断开与 MQTT broker 的连接。执行关机动作要求 AGV 处于空闲状态。使用 VDA 5050 协议无法自动重启，因为连接已终止。<br>如果 AGV 处于休眠模式但需要关机，应在执行关机前先退出休眠（通过 stopHibernation）。 | 是 | - | - | 是 | 否 | 否 | 否
+startCharging | stopCharging | 激活充电过程。<br>充电可在充电点（AGV 停止）或充电车道（行驶中）进行。<br>过充保护由 AGV 负责。 | 是 | - | powerSupply.charging | 是 | 是 | 否 | 否
+stopCharging | startCharging | 终止充电过程。<br>充电过程也可由 AGV 或充电站中断，例如电池已充满。 | 是 | - | powerSupply.charging | 是 | 是 | 否 | 否
+initializePosition | - | 使用给定参数重置（覆盖）AGV 的位姿。 | 是 | x（float64）<br>y（float64）<br>theta（float64）<br>mapId（string）<br>lastNodeId（string） | mobileRobotPosition.x<br>mobileRobotPosition.y<br>mobileRobotPosition.theta<br>mobileRobotPosition.mapId<br>lastNodeId<br>maps | 是 | 是<br>（电梯） | 否 | 否
+enableMap | - | 显式启用先前下载的地图，以便在不初始化新位置的情况下在订单中使用。 | 是 | mapId（string）<br>mapVersion（string） | maps | 是 | 是 | 否 | 否
+downloadMap | - | 触发新地图的下载。下载期间处于活动状态。错误在 AGV 状态中报告。在验证下载成功、准备地图使用并在状态中设置地图后完成。 | 是 | mapId（string）<br>mapVersion（string）<br>mapDownloadLink（string）<br>mapHash（string，可选） | maps | 是 | 否 | 否 | 否
+deleteMap | - | 触发从 AGV 内存中移除地图。 | 是 | mapId（string）<br>mapVersion（string） | maps | 是 | 否 | 否 | 否
+downloadZoneSet | - | 触发区域集的下载。下载期间处于活动状态。错误在 AGV 状态中报告。在验证下载成功、准备区域集使用并在状态中设置区域集后完成。 | 是 | zoneSetId（string）<br>zoneSetDownloadLink（string）<br>zoneSetHash（string，可选） | zoneSets | 是 | 否 | 否 | 否
+enableZoneSet | - | 显式启用先前下载的区域集，以便在订单中使用。 | 是 | zoneSetId（string） | zoneSets | 是 | 是 | 否 | 否
+deleteZoneSet | - | 触发从 AGV 内存中移除区域集。 | 是 | zoneSetId（string） | zoneSets | 是 | 否 | 否 | 否
+clearInstantActions | - | 从 AGV 状态中移除所有已完成或失败的即时动作。 | 是 | - | instantActionStates | 是 | 是 | 否 | 否
+clearZoneActions | - | 从 AGV 状态中移除所有已完成或失败的区域动作。 | 是 | - | zoneActionStates | 是 | 是 | 否 | 否
+stateRequest | - | 请求 AGV 发送新的状态消息。 | 是 | - | - | 是 | 否 | 否 | 否
+logReport | - | 请求 AGV 生成并存储日志报告。 | 是 | reason<br>（string） | - | 是 | 否 | 否 | 否
+pick | drop<br><br>（如自动化） | 请求 AGV 取负载。<br>具有多个负载搬运装置的 AGV 可并行处理多个取货操作。<br>在这种情况下，参数 lhd 需存在（例如 LHD1）。<br>参数 stationType 告知如何处理取货操作的细节（例如地面位置、货架位置、被动传送带、主动传送带等）。<br>负载类型告知负载单元，可用于切换场地等（例如 EPAL、INDU 等）。<br>为准备负载搬运装置（例如基于高度参数的预升操作），可提前在路径前瞻中宣告该动作。<br>但是，预升操作等不会在 AGV 状态中报告为 'RUNNING'，因为关联节点尚未释放。<br>如果在边上，AGV 可使用其传感设备检测在节点处取货的位置。 | 否 | lhd（string，可选）<br>stationType（string，可选）<br>stationName（string，可选）<br>loadType（string，可选）<br>loadId（string，可选）<br>height（float64，可选）<br>定义负载底部相对于地面的位置<br>depth（float64，可选）用于叉车<br>side（string，可选）例如 conveyor | .load | 否 | 是 | 是 | 否
+drop | pick<br><br>（如自动化） | 请求 AGV 放负载。<br>详见 pick 动作。 | 否 | lhd（string，可选）<br>stationType（string，可选）<br>stationName（string，可选）<br>loadType（string，可选）<br>loadId（string，可选）<br>height（float64，可选）<br>depth（float64，可选）<br>… | .load | 否 | 是 | 是 | 否
+detectObject | - | AGV 检测对象（例如负载、充电点、空闲停车位）。 | 是 | objectType（string，可选） | - | 否 | 是 | 是 | 是
+finePositioning | - | 在节点上，AGV 将精确定位到目标。<br>AGV 允许偏离其节点位置。<br>在边上，AGV 将在遍历边时例如与固定设备对齐。 | 是 | stationType（string，可选）<br>stationName（string，可选） | - | 否 | 是 | 是 | 是
+waitForTrigger | - | AGV 应等待 triggerType 参数中定义类型的触发器，该参数为字符串数组。在语义适当时应使用两个预定义值：如果触发器源自调度系统则为 'FLEET_CONTROL'，如果触发器来自 AGV 上的输入（如按钮按压、手动装载）则为 'LOCAL'。如果预定义值不能满足特定要求，可定义自定义值。<br>调度系统负责处理超时，并在必要时取消订单。 | 是 | triggerType [string]（array） | - | 否 | 是 | 否 | 是
+trigger | - | 调度系统通知 AGV 已释放 waitForTrigger 动作。通常，当调度系统收到第三方系统的信息，指示 AGV 等待的过程已完成时发生。 | 是 | - | - | 是 | 否 | 否 | 否
+retry | - | AGV 重试由 actionId 定义且当前处于 RETRIABLE 状态的动作。 | 是 | actionId（string） | - | 是 | 否 | 否 | 否
+skipRetry | - | AGV 应跳过由 actionId 定义且当前处于 RETRIABLE 状态的动作，将该动作设为 FAILED。 | 是 | actionId（string） | - | 是 | 否 | 否 | 否
+cancelOrder | - | AGV 尽快停止。可能是立即或在下一节点。参见标准文档第 6.1.3 节"订单取消"。 | 是 | orderId（string，可选） | - | 是 | 否 | 否 | 否
+factsheetRequest | - | 请求 AGV 发送 factsheet。 | 是 | - | - | 是 | 否 | 否 | 否
+updateCertificate | - | 请求 AGV 下载并激活新的证书集，service 参数是可扩展枚举，预定义参数 'MQTT' 用于 MQTT 连接。 | 是 | service（string）<br>keyDownloadLink（string）<br>certificateDownloadLink（string）<br>certificateAuthorityDownloadLink（string，可选） | - | 是 | 否 | 否 | 否
+
+> 表 70：预定义动作及其范围（即时、节点、边、区域）
+
+### 7.3.2 动作状态
+
+动作类型 | 'INITIALIZING' | 'RUNNING' | 'PAUSED' | 'FINISHED' | 'FAILED' | 'RETRIABLE'
+---|---|---|---|---|---|---
+startPause | - | 模式的激活正在准备中。<br>如果 AGV 支持即时转换，此状态可省略。 | - | AGV 未在移动。<br>所有可暂停的动作已暂停。<br>暂停模式已激活。<br>AGV 报告 paused："true"。 | 暂停模式因某种原因无法激活（例如被硬件开关覆盖）。
+stopPause | - | 模式的停用正在准备中。<br>如果 AGV 支持即时转换，此状态可省略。 | - | 暂停模式已停用。<br>所有暂停的动作已恢复。<br>AGV 报告 paused："false"。 | 暂停模式因某种原因无法停用（例如被硬件开关覆盖）。 | -
+startHibernation | - | 休眠模式的激活正在准备中。如果 AGV 支持即时转换，此状态可省略。 | - | AGV 未在移动。活动订单已被清除（如有）。AGV 不发送状态消息。<br>休眠模式已激活。AGV 报告连接状态 "HIBERNATING"。 | HIBERNATING 连接状态无法发布（例如被硬件开关覆盖）。 | -
+stopHibernation | - | 休眠模式的停用正在准备中。如果 AGV 支持即时转换，此状态可省略。 | - | 休眠模式已停用。<br>AGV 报告 connectionState "ONLINE"。 | 休眠模式无法停用（例如被硬件开关覆盖）。 | -
+shutdown | - | OFFLINE 连接状态的激活正在准备中。如果 AGV 支持即时转换，此状态可省略。 | - | AGV 未在移动。AGV 与 broker 之间的连接以协调方式终止。<br>AGV 报告连接状态 "OFFLINE"。 | 关机因某种原因无法执行（例如 AGV 未处于空闲状态、被硬件开关覆盖）。 | -
+startCharging | - | 充电过程的激活正在进行中（与充电器的通信正在运行）。<br>如果 AGV 支持即时转换，此状态可省略。 | - | 充电过程已启动。<br>AGV 报告 powerSupply.charging："true"。 | 充电过程因某种原因无法启动（例如未对齐充电器）。充电问题应报告相应的错误。 | 充电过程无法启动。AGV 正在等待调度系统或操作员的干预。
+stopCharging | - | 充电过程的停用正在进行中（与充电器的通信正在运行）。<br>如果 AGV 支持即时转换，此状态可省略。 | - | 充电过程已停止。<br>AGV 报告 powerSupply.charging："false"。 | 充电过程因某种原因无法停止（例如未对齐充电器）。<br>充电问题应报告相应的错误。 | -
+initializePosition | - | 新位姿的初始化正在进行中（置信度检查等）。<br>如果 AGV 支持即时转换，此状态可省略。 | - | 位姿已重置。<br>AGV 报告：<br>mobileRobotPosition.x = x，<br>mobileRobotPosition.y = y，<br>mobileRobotPosition.theta = theta，<br>mobileRobotPosition.mapId = mapId，<br>mobileRobotPosition.lastNodeId = lastNodeId。 | 位姿无效或无法重置。<br>一般的定位问题应报告相应的错误。 | -
+downloadMap | 初始化与地图服务器的连接。 | AGV 正在下载地图。 | - | 下载已完成。AGV 通过设置 mapId/mapVersion 及相应的 mapStatus 为 'DISABLED' 来更新其状态。 | 下载失败，在 AGV 状态中更新（例如连接丢失、地图服务器不可达、mapId/mapVersion 在地图服务器上不存在）。 | 下载失败或中断。AGV 正在等待调度系统的干预。
+enableMap | - | AGV 启用具有请求的 mapId 和 mapVersion 的地图，并禁用具有相同 mapId 的任何其他地图。 | - | 地图已启用。AGV 将请求的地图的对应 mapStatus 更新为 'ENABLED'，将具有相同 mapId 的其他版本更新为 'DISABLED'。 | 请求的 mapId/mapVersion 组合不存在。 | -
+deleteMap | - | AGV 从其内部存储器中删除具有请求的 mapId 和 mapVersion 的地图。 | - | 地图已删除。AGV 从其状态中移除 mapId/mapVersion。 | 地图无法删除，例如因为地图当前正在使用或请求的 mapId/mapVersion 组合之前已被删除。 | -
+downloadZoneSet | 初始化与区域集服务器的连接。 | AGV 正在下载区域集。 | - | 下载已完成。AGV 通过在状态中设置相应的 zoneSet 对象（zoneSetStatus 为 'DISABLED'）来更新其状态。 | 下载失败，在 AGV 状态中更新（例如连接丢失、服务器不可达、区域集不存在、具有相同 zoneSetId 的区域集已存在）。 | 下载失败或中断。AGV 正在等待调度系统的干预。
+enableZoneSet | - | AGV 启用具有请求的 zoneSetId 的区域集，并禁用相同 mapId 的任何其他区域集。 | - | 区域集已启用。AGV 将请求的区域集的对应 zoneSetStatus 更新为 'ENABLED'，将相同 mapId 的其他区域集更新为 'DISABLED'。 | 请求的区域集不存在。 | -
+deleteZoneSet | - | AGV 从其内部存储器中删除具有请求的 zoneSetId 的区域集。 | - | 区域集已删除。AGV 从其状态中移除 zoneSet 对象。 | 区域集无法删除，例如因为区域集当前正在使用或请求的区域集之前已被删除。 | -
+clearInstantActions | - | | - | 即时动作数组已清理所有 FINISHED 或 FAILED 的即时动作。 | - | -
+clearZoneActions | - | | - | 区域动作数组已清理所有 FINISHED 或 FAILED 的区域动作。 | - | -
+stateRequest | - | - | - | 状态已通信。 | - | -
+logReport | - | 报告正在生成中。<br>如果 AGV 支持即时生成，此状态可省略。 | - | 报告已存储。<br>日志名称作为动作状态的一部分报告。 | 报告无法存储（例如无空间）。 | -
+pick | 取货过程的初始化，例如未完成的升举操作。 | 取货过程正在运行（AGV 正在驶入工位、负载搬运装置忙碌、与工位的通信正在运行等）。 | 取货过程正在暂停，例如安全场被触发。<br>移除触发后，取货过程继续。 | 取货已完成。<br>负载已进入 AGV，AGV 报告新的负载状态。 | 取货失败，例如工位意外为空。<br>失败的取货操作应报告相应的错误。 | 取货失败，但可重试。AGV 正在等待调度系统或操作员的干预。
+drop | 放货过程的初始化，例如未完成的升举操作。 | 放货过程正在运行（AGV 正在驶入工位、负载搬运装置忙碌、与工位的通信正在运行等）。 | 放货过程正在暂停，例如安全场被触发。<br>移除触发后，放货过程继续。 | 放货已完成。<br>负载已离开 AGV，AGV 报告新的负载状态。 | 放货失败，例如工位意外被占用。<br>失败的放货操作应报告相应的错误。 | 放货失败，但可重试。AGV 正在等待调度系统或操作员的干预。
+detectObject | - | 对象检测正在运行。 | - | 对象已被检测到。 | 无法检测到对象。 | 对象检测失败，但可重试。AGV 正在等待调度系统或操作员的干预。
+finePositioning | - | AGV 精确定位到目标。 | 精定位过程正在暂停，例如安全场被触发。<br>在例如触发解除后精定位继续。 | 已到达相对于工位的目标位置。 | 无法到达相对于工位的目标位置。 | 精定位失败，但可重试。AGV 正在等待调度系统或操作员的干预。
+waitForTrigger | - | AGV 正在等待触发器。 | - | 触发器已被触发。 | 如果订单已取消，waitForTrigger 失败。 | -
+cancelOrder | - | AGV 正在停止或行驶，直到到达下一节点。 | - | AGV 未在移动。AGV 已取消执行订单并处于空闲状态。 | <br>AGV 没有活动订单。<br>之前的订单已被取消。<br>传入的 orderId 与当前活动的 orderId 不匹配。 | -
+factsheetRequest | - | - | - | Factsheet 已通信。 | - | -
+updateCertificate | - | AGV 正在下载和安装证书。 | - | 证书已下载、安装并处于活动状态。 | 下载或安装失败。 | -
+
+> 表 71：预定义动作的动作状态预期行为
+
+### 7.3.3 更新 AGV 证书
+
+出于安全原因，AGV 通信（至少用于调度管理）应是安全的。通常，与 MQTT broker 的通信通过 TLS 进行保护，这需要一个或多个根证书和 AGV 特定的密钥对。参数 `service` 指定证书用于的服务（例如 'MQTT'）。参数 `certificateAuthorityDownloadLink` 指定根证书的 URL。参数 `certificateDownloadLink` 和 `keyDownloadLink` 指定 AGV 特定的公钥和私钥的 URL。
+
+由于无法验证 instantAction 的发送者，下载也应通过 TLS 进行保护。还建议在激活前验证证书链。
+
+---
+
+---
