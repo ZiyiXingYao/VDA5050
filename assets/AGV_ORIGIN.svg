@@ -1,0 +1,42 @@
+<svg viewBox="20 15 220 275" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>AGV设备坐标系原点——物理中心</title>
+  <desc>AGV俯视图，长边为X轴方向（前进方向），物理中心为设备坐标系原点（旋转中心）</desc>
+  <defs>
+    <marker id="ax" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#333333" stroke-width="1.6"/>
+    </marker>
+  </defs>
+
+  <!-- AGV车体（竖直，长边=X轴方向） -->
+  <rect x="120" y="80" width="100" height="160" rx="2" fill="#FFFFFF" stroke="#333333" stroke-width="2"/>
+
+  <!-- 两个车轮（左右居中） -->
+  <circle cx="120" cy="160" r="8" fill="#FFFFFF" stroke="#333333" stroke-width="2"/>
+  <circle cx="220" cy="160" r="8" fill="#FFFFFF" stroke="#333333" stroke-width="2"/>
+
+  <!-- 两轮中心红色虚线 -->
+  <line x1="120" y1="160" x2="220" y2="160" stroke="#D43900" stroke-width="1.8" stroke-dasharray="5,4"/>
+
+  <!-- 物理中心点 -->
+  <circle cx="170" cy="160" r="5" fill="#D43900" stroke="#AA2200" stroke-width="1.5"/>
+  <circle cx="170" cy="160" r="2" fill="#FFFFFF"/>
+
+  <!-- 黑色三角形车头朝向（X轴方向） -->
+  <polygon points="170,75 165,95 175,95" fill="#000000"/>
+
+  <!-- 坐标系 -->
+  <!-- X轴 ↑ 向上 -->
+  <line x1="170" y1="160" x2="170" y2="30" stroke="#333333" stroke-width="2" marker-end="url(#ax)"/>
+  <text x="178" y="38" text-anchor="start" font-size="13" font-family="sans-serif" fill="#333333">x</text>
+
+  <!-- Y轴 ← 向左 -->
+  <line x1="170" y1="160" x2="30" y2="160" stroke="#333333" stroke-width="2" marker-end="url(#ax)"/>
+  <text x="38" y="152" text-anchor="start" font-size="13" font-family="sans-serif" fill="#333333">y</text>
+
+  <!-- 物理中心标注 -->
+  <text x="170" y="190" text-anchor="middle" font-size="11" font-family="sans-serif" fill="#D43900">物理中心</text>
+
+  <!-- 说明 -->
+  <text x="170" y="260" text-anchor="middle" font-size="9" font-family="sans-serif" fill="#666666">AGV 俯视图</text>
+  <text x="170" y="272" text-anchor="middle" font-size="9" font-family="sans-serif" fill="#666666">设备原点 = 物理中心（旋转中心）</text>
+</svg>
